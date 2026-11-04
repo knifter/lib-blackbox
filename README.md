@@ -12,7 +12,7 @@ Written for Arduino-ESP32 (core 3.x); prepared for plain ESP-IDF.
 - **Several outputs at once.** Serial, telnet (with colours), syslog (RFC 5424 over UDP), and a binary TCP stream for a dedicated client. Each output reads at its own pace.
 - **Captures ESP-IDF messages** (`ESP_LOGx`) as records too.
 - **Commands** over telnet and serial: built-in ones (`help`, `level`, `mem`, …) plus your own.
-- **Core dump report:** logs the backtrace of the last crash at boot (optional).
+- **Core dump report:** logs the task, exception cause and backtrace of the last crash at boot, ready to decode with `addr2line` (optional).
 - **Lean when you want it.** With only the serial output enabled, no network code is compiled in.
 
 ## Quick start (Arduino)
@@ -100,7 +100,8 @@ Set these in your project's `config.h` (included automatically if it exists) or 
 | `BLACKBOX_SINK_BINARY` | `0` | binary TCP output |
 | `BLACKBOX_BINARY_PORT` | `2323` | |
 | `BLACKBOX_HOSTNAME` | `"esp32"` | name used in syslog and the binary header |
-| `BLACKBOX_COREDUMP_REPORT` | `0` | log the last crash's core dump at boot, then erase it |
+| `BLACKBOX_COREDUMP_REPORT` | `0` | log the last crash's core dump at boot |
+| `BLACKBOX_COREDUMP_ERASE` | `0` | `0`: keep the dump and report it at every boot; `1`: erase it after reporting (reported once) |
 | `BLACKBOX_MAX_COMMANDS` | `16` | number of commands of your own |
 | `BLACKBOX_CMD_QUEUE` | `4` | queued commands waiting for `handleCommands()` |
 | `BLACKBOX_CMD_LEN` | `64` | longest command line |
@@ -236,18 +237,71 @@ After a crash, connect and you'll see the log leading up to the crash, followed 
 The backtrace itself is printed by the panic handler straight to the UART and is not in the ring. If your core writes core dumps to flash (Arduino-ESP32 3.x does by default, with a `coredump` partition in the partition table), set `BLACKBOX_COREDUMP_REPORT 1` to log the crash at the next boot:
 
 ```
-Core dump: task 'loopTask', PC 0x400d2f1a, exception cause 29, address 0x00000000
+Last core dump (from the previous boot, this firmware, ELF sha256 1a2b3c4d): task 'loopTask'
+Exception: StoreProhibited (cause 29), PC 0x400d2f1a, address 0x00000000
+A0  0x800d3b44  A1  0x3ffb2270  A2  0x00000000  A3  0x00000001
+A4  0x3ffc1a2c  A5  0x00000000  A6  0x00000000  A7  0x00000000
+A8  0x800d2f18  A9  0x3ffb2250  A10 0x00000000  A11 0x3ffc1b10
+A12 0x00000001  A13 0x00000000  A14 0x00000000  A15 0x00000000
+EPC1 0x400d2f1a
 Backtrace: 0x400d2f1a 0x400d3b44 0x400e1c20 ...
-Core dump ELF sha256: 1a2b3c4d, running firmware: 1a2b3c4d
 ```
 
-Decode the backtrace with the ELF of the firmware that crashed:
+### Reading the report
+
+- **task:** the FreeRTOS task that crashed, e.g. `loopTask` for Arduino's `loop()`.
+- **PC:** the instruction that crashed.
+- **A0–A15:** the CPU registers at the moment of the crash. A0 usually holds the return address (with the top bits set: `0x800d3b44` means `0x400d3b44`), A1 is the stack pointer; the others depend on the code. Registers holding `0x0` next to a cause 28/29 often point to the NULL pointer.
+- **EPC1…:** the address of the instruction where each (nested) exception happened; EPC1 is normally the same as PC.
+- **exception cause:** the Xtensa exception code, with the name ESP-IDF's panic handler uses. The common ones:
+
+  | Cause | Name | Usually means |
+  |---|---|---|
+  | 0 | IllegalInstruction | jumped to garbage, e.g. a corrupted function pointer |
+  | 3 | LoadStoreError | 8- or 16-bit access to memory that only allows 32-bit access |
+  | 6 | IntegerDivideByZero | division by zero |
+  | 9 | LoadStoreAlignment | unaligned access |
+  | 28 | LoadProhibited | reading through a bad pointer (often NULL) |
+  | 29 | StoreProhibited | writing through a bad pointer (often NULL) |
+
+- **address:** the memory address that was accessed, for causes 3, 9, 28 and 29. `0x00000000` or a small value means a NULL pointer, possibly plus a struct offset.
+- **Backtrace:** the call chain of the crashed task, newest call first, up to 16 levels. `(corrupted)` means the stack was damaged, so the list is incomplete.
+
+For a failed `assert()`, `abort()` or a watchdog, the first entries are in the panic and abort code itself; your own code is further down the list.
+
+### Decoding the backtrace
+
+The backtrace holds addresses. `addr2line` turns them into function names and source lines, using the ELF of the exact firmware that crashed:
 
 ```
 xtensa-esp32-elf-addr2line -pfiaC -e firmware.elf 0x400d2f1a 0x400d3b44 0x400e1c20
 ```
 
-The report erases the dump afterwards, which is a flash write; that's why it's off by default. While it's off, the last crash's dump stays in flash until you turn the report on. The ESP-IDF panic handler writes the dump on every crash regardless of this setting.
+```
+0x400d2f1a: cmd_crash(char const*) at src/main.cpp:20
+0x400d3b44: BlackBoxClass::handleCommands() at lib/lib-blackbox/src/bb_commands.cpp:162
+0x400e1c20: loop() at src/main.cpp:37
+```
+
+In a PlatformIO project:
+
+- **`addr2line`** comes with the toolchain: `~/.platformio/packages/toolchain-xtensa-esp-elf/bin/xtensa-esp32-elf-addr2line` (on Windows `%USERPROFILE%\.platformio\packages\…\xtensa-esp32-elf-addr2line.exe`).
+- **`firmware.elf`** is in the build folder: `.pio/build/<env>/firmware.elf`, or under `build_dir` if you set one.
+- **Keep the ELF of every firmware you ship or flash.** The report's ELF hash tells you which one you need; with a different ELF the addresses point to the wrong functions. Rebuilding the same source usually gives the same ELF, but not guaranteed.
+
+On a serial cable you don't need any of this: PlatformIO's monitor with `monitor_filters = esp32_exception_decoder` decodes the panic output live.
+
+The report is about the last crash that was stored, not necessarily one from the previous boot. It says "from the previous boot" when this boot's reset reason is a panic or watchdog, and "from an earlier boot" otherwise.
+
+What happens to the dump after the report:
+
+- `BLACKBOX_COREDUMP_ERASE 0` (default): it is kept and reported at every boot, until the next crash replaces it. No flash writes.
+- `BLACKBOX_COREDUMP_ERASE 1`: it is erased, so each crash is reported once, followed by "Core dump erased.". Erasing is a flash write.
+- A dump from another firmware (different ELF hash) is not reported: its addresses only decode with that firmware's ELF. You get one warning, `Core dump from another firmware (ELF sha256 …) found, erased`, and it is erased. An unreadable dump is always erased too.
+
+While the report is off, nothing reads or erases the dump: the last crash stays in flash until you turn the report on.
+
+The ESP-IDF panic handler writes the dump on every crash, regardless of these settings.
 
 ## How it works
 

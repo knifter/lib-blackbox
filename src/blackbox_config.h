@@ -73,31 +73,37 @@
     #define BLACKBOX_HOSTNAME           "esp32"
 #endif
 
-// Log the last crash's core dump at boot, then erase it (a flash write)
+// Log the last crash's core dump at boot
 #ifndef BLACKBOX_COREDUMP_REPORT
-#define BLACKBOX_COREDUMP_REPORT    0
+    #define BLACKBOX_COREDUMP_REPORT    0
+#endif
+// 1: erase the dump after reporting it (a flash write), so it is reported once
+// 0: keep it and report it at every boot. A dump from another firmware or an unreadable one is
+//    always erased, with only a warning
+#ifndef BLACKBOX_COREDUMP_ERASE
+    #define BLACKBOX_COREDUMP_ERASE     0
 #endif
 
 // Commands
 #ifndef BLACKBOX_MAX_COMMANDS
-#define BLACKBOX_MAX_COMMANDS       16
+    #define BLACKBOX_MAX_COMMANDS       16
 #endif
 #ifndef BLACKBOX_CMD_QUEUE
-#define BLACKBOX_CMD_QUEUE          4       // queued application commands, run by handleCommands()
+    #define BLACKBOX_CMD_QUEUE          4       // queued application commands, run by handleCommands()
 #endif
 #ifndef BLACKBOX_CMD_LEN
-#define BLACKBOX_CMD_LEN            64
+    #define BLACKBOX_CMD_LEN            64
 #endif
 
 // Dispatcher task
 #ifndef BLACKBOX_TASK_CORE
-#define BLACKBOX_TASK_CORE          0       // not the Arduino loop() core, so a hanging loop() can't starve it
+    #define BLACKBOX_TASK_CORE          0       // not the Arduino loop() core, so a hanging loop() can't starve it
 #endif
 #ifndef BLACKBOX_TASK_PRIO
-#define BLACKBOX_TASK_PRIO          1
+    #define BLACKBOX_TASK_PRIO          1
 #endif
 #ifndef BLACKBOX_TASK_STACK
-#define BLACKBOX_TASK_STACK         4096
+    #define BLACKBOX_TASK_STACK         4096
 #endif
 
 #endif // __BLACKBOX_CONFIG_H
