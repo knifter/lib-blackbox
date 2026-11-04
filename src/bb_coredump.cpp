@@ -74,9 +74,9 @@ void bb_coredump_report()
     ERROR("Last core dump (%s, this firmware, ELF sha256 %s): task '%s'",
         previous ? "from the previous boot" : "from an earlier boot", bb_elf_sha(), sum->exc_task);
 
+#if CONFIG_IDF_TARGET_ARCH_XTENSA
     char line[16 + 11 * 16];
 
-#if CONFIG_IDF_TARGET_ARCH_XTENSA
     ERROR("Exception: %s (cause %" PRIu32 "), PC 0x%08" PRIx32 ", address 0x%08" PRIx32,
         exc_cause_name(sum->ex_info.exc_cause), sum->ex_info.exc_cause, sum->exc_pc, sum->ex_info.exc_vaddr);
 
@@ -99,15 +99,16 @@ void bb_coredump_report()
             n += snprintf(line + n, sizeof(line) - n, "EPC%u 0x%08" PRIx32 "  ", (unsigned)(i + 1), sum->ex_info.epcx[i]);
     if(n)
         ERROR("%s", line);
-#else
-    ERROR("PC 0x%08" PRIx32, sum->exc_pc);
-#endif
 
     // Same layout as the panic output, ready for addr2line
     size_t pos = snprintf(line, sizeof(line), "Backtrace:");
     for(uint32_t i = 0; i < sum->exc_bt_info.depth && pos < sizeof(line); i++)
         pos += snprintf(line + pos, sizeof(line) - pos, " 0x%08" PRIx32, sum->exc_bt_info.bt[i]);
     ERROR("%s%s", line, sum->exc_bt_info.corrupted ? " (corrupted)" : "");
+#else
+    // RISC-V: the summary holds a raw stack dump instead of a backtrace (TODO: cause, registers)
+    ERROR("PC 0x%08" PRIx32 " (no backtrace in the summary on this chip, use esp-coredump with the ELF)", sum->exc_pc);
+#endif
 
     free(sum);
 
