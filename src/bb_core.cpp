@@ -9,6 +9,7 @@
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_app_desc.h>
+#include <esp_sleep.h>
 
 #define BB_MAGIC        0x58424242      // "BBBX"
 #define BB_MAX_SINKS    4
@@ -82,22 +83,71 @@ static void ring_out(uint32_t pos, void* data, size_t len)
     };
 };
 
-static const char* reset_reason_str(esp_reset_reason_t r)
+// esp_reset_reason_t in enum order: ESP-IDF only ever appends to it, so newer values index safely
+static const char* const s_reset_names[][2] =
 {
-    switch(r)
+    { "unknown",            "ESP_RST_UNKNOWN" },
+    { "power-on",           "ESP_RST_POWERON" },
+    { "external pin",       "ESP_RST_EXT" },
+    { "software",           "ESP_RST_SW" },
+    { "panic",              "ESP_RST_PANIC" },
+    { "interrupt watchdog", "ESP_RST_INT_WDT" },
+    { "task watchdog",      "ESP_RST_TASK_WDT" },
+    { "other watchdog",     "ESP_RST_WDT" },
+    { "deep sleep wake",    "ESP_RST_DEEPSLEEP" },
+    { "brownout",           "ESP_RST_BROWNOUT" },
+    { "SDIO",               "ESP_RST_SDIO" },
+    { "USB",                "ESP_RST_USB" },
+    { "JTAG",               "ESP_RST_JTAG" },
+    { "efuse error",        "ESP_RST_EFUSE" },
+    { "power glitch",       "ESP_RST_PWR_GLITCH" },
+    { "CPU lockup",         "ESP_RST_CPU_LOCKUP" },
+};
+
+// Only causes that exist in every ESP-IDF 5.x: newer ones were inserted mid-enum, so no table by number
+static const char* wakeup_cause_str(esp_sleep_wakeup_cause_t cause)
+{
+    switch(cause)
     {
-        case ESP_RST_POWERON:   return "power-on";
-        case ESP_RST_EXT:       return "external pin";
-        case ESP_RST_SW:        return "software";
-        case ESP_RST_PANIC:     return "panic";
-        case ESP_RST_INT_WDT:   return "interrupt watchdog";
-        case ESP_RST_TASK_WDT:  return "task watchdog";
-        case ESP_RST_WDT:       return "other watchdog";
-        case ESP_RST_DEEPSLEEP: return "deep sleep wake";
-        case ESP_RST_BROWNOUT:  return "brownout";
-        case ESP_RST_SDIO:      return "SDIO";
-        default:                return "unknown";
+        case ESP_SLEEP_WAKEUP_EXT0:             return "ext0 (ESP_SLEEP_WAKEUP_EXT0)";
+        case ESP_SLEEP_WAKEUP_EXT1:             return "ext1 (ESP_SLEEP_WAKEUP_EXT1)";
+        case ESP_SLEEP_WAKEUP_TIMER:            return "timer (ESP_SLEEP_WAKEUP_TIMER)";
+        case ESP_SLEEP_WAKEUP_TOUCHPAD:         return "touchpad (ESP_SLEEP_WAKEUP_TOUCHPAD)";
+        case ESP_SLEEP_WAKEUP_ULP:              return "ULP (ESP_SLEEP_WAKEUP_ULP)";
+        case ESP_SLEEP_WAKEUP_GPIO:             return "GPIO (ESP_SLEEP_WAKEUP_GPIO)";
+        case ESP_SLEEP_WAKEUP_UART:             return "UART (ESP_SLEEP_WAKEUP_UART)";
+        case ESP_SLEEP_WAKEUP_WIFI:             return "WiFi (ESP_SLEEP_WAKEUP_WIFI)";
+        case ESP_SLEEP_WAKEUP_COCPU:            return "co-processor (ESP_SLEEP_WAKEUP_COCPU)";
+        case ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG:  return "co-processor crash (ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG)";
+        case ESP_SLEEP_WAKEUP_BT:               return "BT (ESP_SLEEP_WAKEUP_BT)";
+        default:                                return nullptr;
     };
+};
+
+// "boot, reset reason: deep sleep wake (ESP_RST_DEEPSLEEP), wakeup: ext0 (ESP_SLEEP_WAKEUP_EXT0)"
+static void bb_say_boot()
+{
+    char text[128];
+    size_t n;
+    esp_reset_reason_t reason = esp_reset_reason();
+    if((size_t) reason < sizeof(s_reset_names) / sizeof(s_reset_names[0]))
+        n = snprintf(text, sizeof(text), "boot, reset reason: %s (%s)", s_reset_names[reason][0], s_reset_names[reason][1]);
+    else
+        n = snprintf(text, sizeof(text), "boot, reset reason: %d", (int) reason);
+    n = BB_MIN(n, sizeof(text) - 1);
+
+    // Only after a deep sleep reset does the wakeup cause mean anything
+    if(reason == ESP_RST_DEEPSLEEP)
+    {
+        esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+        const char* name = wakeup_cause_str(cause);
+        if(name)
+            snprintf(text + n, sizeof(text) - n, ", wakeup: %s", name);
+        else
+            snprintf(text + n, sizeof(text) - n, ", wakeup cause %d", (int) cause);
+    };
+
+    bb_say("%s", text);
 };
 
 // Once per boot, at the first log call (in setup/app_main, before other tasks log)
@@ -117,7 +167,7 @@ static void bb_init()
     };
     s_boot_start = s_buf.head;
 
-    bb_say("boot, reset reason: %s", reset_reason_str(esp_reset_reason()));
+    bb_say_boot();
 };
 
 uint32_t bb_now_ms()
@@ -335,7 +385,7 @@ static int bb_vprintf(const char* fmt, va_list args)
     bb_store(level, BB_SRC_ESPIDF, nullptr, nullptr, 0, line, n);
     return len;
 };
-#endif
+#endif // BLACKBOX_ESPLOG
 
 void BlackBoxClass::begin()
 {
@@ -364,10 +414,10 @@ void BlackBoxClass::begin()
 #if BLACKBOX_ESPLOG
   #if BLACKBOX_SINK_SERIAL
     esp_log_set_vprintf(&bb_vprintf);
-  #else
+  #else // !BLACKBOX_SINK_SERIAL
     s_prev_vprintf = esp_log_set_vprintf(&bb_vprintf);
-  #endif
-#endif
+  #endif // BLACKBOX_SINK_SERIAL
+#endif // BLACKBOX_ESPLOG
 
     xTaskCreatePinnedToCore(&bb_task, "blackbox", BLACKBOX_TASK_STACK, nullptr, BLACKBOX_TASK_PRIO, &s_task, BLACKBOX_TASK_CORE);
 
@@ -459,4 +509,4 @@ size_t BlackBoxClass::write(const uint8_t* buf, size_t len)
     };
     return len;
 };
-#endif
+#endif // ARDUINO

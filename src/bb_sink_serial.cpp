@@ -23,7 +23,7 @@ class bb_sink_serial : public bb_sink
                 for(int i = 0; i < n; i++)
                     if(_reader.feed(in[i]))
                         bb_command_line(this, _reader.line());
-#endif
+#endif // BLACKBOX_SERIAL_COMMANDS
             bb_record_t rec;
             char out[BLACKBOX_LINE_MAX + 96];
             while(next(rec))

@@ -77,6 +77,10 @@
 #ifndef BLACKBOX_COREDUMP_REPORT
     #define BLACKBOX_COREDUMP_REPORT    0
 #endif
+// 1: also log registers A0-A15 of the crash (Xtensa); rarely needed, the backtrace usually says enough
+#ifndef BLACKBOX_COREDUMP_REGISTERS
+    #define BLACKBOX_COREDUMP_REGISTERS 0
+#endif
 // 1: erase the dump after reporting it (a flash write), so it is reported once
 // 0: keep it and report it at every boot. A dump from another firmware or an unreadable one is
 //    always erased, with only a warning
