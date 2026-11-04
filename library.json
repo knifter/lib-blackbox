@@ -1,0 +1,11 @@
+{
+    "name": "BlackBox",
+    "version": "0.1.0",
+    "description": "Crash-surviving ring buffer logger for ESP32, with serial, telnet, syslog and binary outputs",
+    "keywords": "log, logging, telnet, syslog, coredump, esp32",
+    "frameworks": ["arduino", "espidf"],
+    "platforms": ["espressif32"],
+    "build": {
+        "srcDir": "src"
+    }
+}
