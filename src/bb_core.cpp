@@ -33,6 +33,7 @@ typedef struct
     char elf[8];                        // file/func pointers are only valid for the firmware that wrote them
     uint32_t head;                      // total bytes ever written
     uint32_t tail;                      // start of the oldest complete record
+    uint32_t cursor[BB_MAX_SINKS];      // read position of each sink, so it continues after a reset
     uint8_t ring[BLACKBOX_BUFSIZE];
 } bb_buf_t;
 
@@ -44,6 +45,7 @@ static bb_buf_t s_buf;
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_initialized = false;
+static bool s_buf_kept = false;         // the ring (and the sink positions) survived the reset
 static uint32_t s_boot_start = 0;
 static char s_elf[9];
 static TaskHandle_t s_task = nullptr;
@@ -156,14 +158,17 @@ static void bb_init()
     s_initialized = true;
     esp_app_get_elf_sha256(s_elf, sizeof(s_elf));
 
+    s_buf_kept = true;
     if(s_buf.magic != BB_MAGIC || s_buf.size != BLACKBOX_BUFSIZE || memcmp(s_buf.elf, s_elf, 8) != 0
         || s_buf.head - s_buf.tail > BLACKBOX_BUFSIZE)
     {
+        s_buf_kept = false;
         s_buf.magic = BB_MAGIC;
         s_buf.size = BLACKBOX_BUFSIZE;
         memcpy(s_buf.elf, s_elf, 8);
         s_buf.head = 0;
         s_buf.tail = 0;
+        memset(s_buf.cursor, 0, sizeof(s_buf.cursor));
     };
     s_boot_start = s_buf.head;
 
@@ -290,13 +295,13 @@ bool bb_read(uint32_t& cursor, bb_record_t& rec, char* text, size_t text_size, u
 bool bb_sink::next(bb_record_t& rec)
 {
     uint32_t lost;
-    if(bb_read(_cursor, rec, _text, sizeof(_text), lost))
+    if(bb_read(*_cursor, rec, _text, sizeof(_text), lost))
         return true;
     if(!lost)
         return false;
 
-    // This sink fell behind: tell it instead of silently skipping
-    int n = snprintf(_text, sizeof(_text), "%u bytes of log lost (output too slow)", (unsigned) lost);
+    // The ring wrapped past this sink's position (slow output, or nobody connected for a long time)
+    int n = snprintf(_text, sizeof(_text), "%u bytes of log lost before this point", (unsigned) lost);
     rec.level = BB_WARNING;
     rec.source = BB_SRC_SYSTEM;
     rec.time_ms = bb_now_ms();
@@ -310,13 +315,13 @@ bool bb_sink::next(bb_record_t& rec)
 
 bool bb_sink::at_head()
 {
-    return _cursor == s_buf.head;
+    return *_cursor == s_buf.head;
 };
 
 void bb_sink::replay()
 {
     portENTER_CRITICAL(&s_mux);
-    _cursor = s_buf.tail;
+    *_cursor = s_buf.tail;
     portEXIT_CRITICAL(&s_mux);
 };
 
@@ -340,7 +345,13 @@ static void bb_add_sink(bb_sink* sink)
 {
     if(s_nsinks >= BB_MAX_SINKS)
         return;
-    sink->set_cursor(s_boot_start);     // everything logged since this boot, including before begin()
+
+    // Continue where this sink stopped before the reset, so it sends only what it hasn't sent yet.
+    // A fresh ring, or a position that makes no sense: start at this boot (including before begin())
+    uint32_t* cursor = &s_buf.cursor[s_nsinks];
+    if(!s_buf_kept || (int32_t)(*cursor - s_buf.head) > 0)
+        *cursor = s_boot_start;
+    sink->attach_cursor(cursor);
     s_sinks[s_nsinks++] = sink;
 };
 

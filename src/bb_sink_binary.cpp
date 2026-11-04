@@ -17,11 +17,9 @@ class bb_sink_binary : public bb_sink
 
         void poll() override
         {
+            // While nobody is connected the position stays put: a new client gets what it hasn't seen yet
             if(_server.poll_accept())
-            {
                 send_header();
-                replay();
-            };
 
             char in[32];
             int n;

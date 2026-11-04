@@ -17,11 +17,9 @@ class bb_sink_telnet : public bb_sink
 
         void poll() override
         {
+            // While nobody is connected the position stays put: a new client gets what it hasn't seen yet
             if(_server.poll_accept())
-            {
-                replay();               // a new client first gets everything still in the ring
                 _iac = 0;
-            };
 
             char in[32];
             int n;

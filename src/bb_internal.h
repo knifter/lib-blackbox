@@ -31,8 +31,9 @@ class bb_sink
         virtual void sync() {};                     // flush(): wait until sent data has really left
 
         void replay();                              // start again at the oldest record in the ring
-        void set_cursor(uint32_t pos) { _cursor = pos; };
-        uint32_t cursor() const { return _cursor; };
+        void set_cursor(uint32_t pos) { *_cursor = pos; };
+        uint32_t cursor() const { return *_cursor; };
+        void attach_cursor(uint32_t* storage) { _cursor = storage; };   // bb_core: keeps it in the RTC buffer
 
         bb_level_t level = BB_VERBOSE;              // runtime filter, set with the "level" command
 
@@ -41,7 +42,8 @@ class bb_sink
         bool at_head();
         bool show(const bb_record_t& rec) const { return rec.source == BB_SRC_SYSTEM || rec.level <= level; };
 
-        uint32_t _cursor = 0;
+        uint32_t _cursor_local = 0;
+        uint32_t* _cursor = &_cursor_local;         // read position; points into the RTC buffer once added
         char _text[BLACKBOX_LINE_MAX];
 };
 
