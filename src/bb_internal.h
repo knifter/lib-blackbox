@@ -85,7 +85,7 @@ void bb_store(bb_level_t level, bb_source_t source, const char* file, const char
 void bb_say(const char* fmt, ...) __attribute__((format(printf, 1, 2)));   // a BB_SRC_SYSTEM record
 bool bb_read(uint32_t& cursor, bb_record_t& rec, char* text, size_t text_size, uint32_t& lost);
 uint32_t bb_head();
-uint32_t bb_tail();
+// uint32_t bb_tail();
 uint32_t bb_now_ms();
 const char* bb_elf_sha();                           // first 8 hex characters of the firmware ELF hash
 void bb_poll_all();

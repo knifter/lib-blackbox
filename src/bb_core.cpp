@@ -202,10 +202,11 @@ uint32_t bb_head()
     return __atomic_load_n(&s_buf.head, __ATOMIC_RELAXED);
 };
 
-uint32_t bb_tail()
-{
-    return s_buf.tail;
-};
+// Without the lock: see at_head()
+// uint32_t bb_tail()
+// {
+//     return __atomic_load_n(&s_buf.tail, __ATOMIC_RELAXED);
+// };
 
 // The ring write, shared by tasks and ISRs. isr picks the lock variant at compile time:
 // each caller gets its own copy, without a runtime check
