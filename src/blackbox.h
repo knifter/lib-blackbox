@@ -7,10 +7,6 @@
 
 #include "blackbox_config.h"
 
-#ifdef ARDUINO
-    #include <Print.h>
-#endif
-
 // Same numbering as esp_log_level_t
 typedef enum : uint8_t
 {
@@ -26,16 +22,13 @@ typedef enum : uint8_t
 {
     BB_SRC_APP = 0,         // the logging macros
     BB_SRC_ESPIDF,          // ESP_LOGx
-    BB_SRC_PRINT,           // BlackBox.print() and friends
+    BB_SRC_PRINT,           // reserved: a separate Print class (number kept for the binary protocol)
     BB_SRC_SYSTEM,          // BlackBox itself: boot marker, lost records, command replies
 } bb_source_t;
 
 typedef void (*bb_command_handler_t)(const char* args);
 
 class BlackBoxClass
-#ifdef ARDUINO
-    : public Print
-#endif
 {
     public:
         void begin();                       // starts the dispatcher, the sinks and the ESP-IDF hook
@@ -51,13 +44,7 @@ class BlackBoxClass
         bool addCommand(const char* name, bb_command_handler_t handler, const char* help = nullptr);
         void handleCommands();              // call from loop(): runs queued commands in the caller's task
 
-#ifdef ARDUINO
-        size_t write(uint8_t c) override;
-        size_t write(const uint8_t* buf, size_t len) override;
-        void flush() override { flush(500); };
-#else
         void flush() { flush(500); };
-#endif
 };
 
 extern BlackBoxClass BlackBox;

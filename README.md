@@ -1,13 +1,13 @@
 # BlackBox
 
-A logger for the ESP32 that behaves like a flight recorder. Log calls only store a record in a ring buffer; a background task sends the records to one or more outputs (serial, telnet, syslog, a binary TCP stream). The ring lives in RTC memory, so the last few kilobytes of log survive a crash, a watchdog reset or deep sleep, and are there to read after the reboot.
+A logger for the ESP32 that behaves like a flight recorder. Log calls only store a record in a ring buffer; a background task sends the records to one or more outputs (serial, telnet, syslog, a binary TCP stream). The ring lives in RTC memory, so the last few kilobytes of log survive a crash, a watchdog reset or deep sleep, and are there to read after the reboot together with the core dump to retreive the stack-trace.
 
 Written for Arduino-ESP32 (core 3.x); prepared for plain ESP-IDF.
 
 ## Features
 
 - **Cheap log calls.** A log call formats its message and copies it into the ring. It never waits for a UART or the network, and is safe from any task.
-- **Survives resets.** The ring is in `RTC_NOINIT` memory and survives panics, watchdog resets, software restarts and deep sleep (not power loss). Each boot adds a marker with the reset reason: `--- boot, reset reason: panic ---`.
+- **Survives resets.** The ring is in `RTC_NOINIT` memory and survives panics, watchdog resets, software restarts and deep sleep (not power loss). **This uses about half of the ESP32's 8 KB RTC slow memory with the default settings**; see [Size](#size) for how to reduce that. Each boot adds a marker with the reset reason, and after a deep sleep wake also the wakeup cause: `--- boot, reset reason: deep sleep wake (ESP_RST_DEEPSLEEP), wakeup: ext0 (ESP_SLEEP_WAKEUP_EXT0) ---`. The names in brackets are ESP-IDF's (`esp_reset_reason()`, `esp_sleep_get_wakeup_cause()`) defines.
 - **Records, not just text.** Every message is stored with its level, source, timestamp, file, function and line. Each output formats them its own way.
 - **Several outputs at once.** Serial, telnet (with colours), syslog (RFC 5424 over UDP), and a binary TCP stream for a dedicated client. Each output reads at its own pace.
 - **Captures ESP-IDF messages** (`ESP_LOGx`) as records too.
@@ -37,9 +37,7 @@ void loop()
 };
 ```
 
-Messages logged before `begin()` are kept and sent once `begin()` has run.
-
-More in [`examples/`](examples). Each example is a small PlatformIO project (`platformio.ini` plus `src/main.cpp`) that uses the library from this folder; open the example folder in PlatformIO and build it.
+Messages logged before `begin()` are kept and sent once `begin()` has run. More in [`examples/`](examples).
 
 | Example | Shows |
 |---|---|
@@ -61,13 +59,11 @@ They take a `printf` format and arguments, and add file, function and line autom
 
 `BLACKBOX_LEVEL` removes the macros that are more verbose than that level at compile time: with `BLACKBOX_LEVEL 3`, `ERROR`, `WARNING` and `INFO` stay, and `DBG` and `VERBOSE` compile to nothing. The `level` command filters the same way per output at runtime.
 
-On Arduino, `BlackBox` is also a `Print`: `BlackBox.print()`, `println()` and `printf()` work and are logged at info level, one record per line. Use them from one task at a time.
-
 ## API
 
 ```cpp
 BlackBox.begin();                                   // starts the dispatcher task, the outputs and the ESP-IDF hook
-BlackBox.log(level, file, func, line, fmt, ...);    // what the macros call
+BlackBox.log(level, file, func, line, fmt, ...);    // what the macros call, file-func should be static ptrs!
 BlackBox.flush(timeout_ms);                         // waits until every output has sent everything; false on timeout
 BlackBox.flush();                                   // the same, with a 500 ms timeout
 BlackBox.clear();                                   // empties the ring
@@ -75,7 +71,7 @@ BlackBox.addCommand(name, handler, help);           // registers a command of yo
 BlackBox.handleCommands();                          // call from loop(): runs queued commands
 ```
 
-Call `BlackBox.flush()` before doing something that might crash, to get everything out live. Whatever doesn't make it out is still in the ring after the reset.
+Call `BlackBox.flush()` to get everything out live before right away. Whatever doesn't make it out is still in the ring after the reset.
 
 ## Configuration
 
@@ -83,8 +79,8 @@ Set these in your project's `config.h` (included automatically if it exists) or 
 
 | Define | Default | Meaning |
 |---|---|---|
-| `BLACKBOX_BUFSIZE` | `4096` | ring size in bytes |
-| `BLACKBOX_RTC` | `1` | keep the ring in RTC memory |
+| `BLACKBOX_BUFSIZE` | `4096` | ring size in bytes; with `BLACKBOX_RTC 1` this comes out of the 8 KB RTC slow memory |
+| `BLACKBOX_RTC` | `1` | keep the ring in RTC memory so it survives resets (uses half the RTC memory by default); `0` puts it in normal RAM |
 | `BLACKBOX_LINE_MAX` | `256` | longest message text |
 | `BLACKBOX_LEVEL` | `5` | compile-time level; macros more verbose than this are removed |
 | `BLACKBOX_ESPLOG` | `1` | capture ESP-IDF `ESP_LOGx` output |
@@ -101,6 +97,7 @@ Set these in your project's `config.h` (included automatically if it exists) or 
 | `BLACKBOX_BINARY_PORT` | `2323` | |
 | `BLACKBOX_HOSTNAME` | `"esp32"` | name used in syslog and the binary header |
 | `BLACKBOX_COREDUMP_REPORT` | `0` | log the last crash's core dump at boot |
+| `BLACKBOX_COREDUMP_REGISTERS` | `0` | also log registers A0–A15 of the crash (Xtensa) |
 | `BLACKBOX_COREDUMP_ERASE` | `0` | `0`: keep the dump and report it at every boot; `1`: erase it after reporting (reported once) |
 | `BLACKBOX_MAX_COMMANDS` | `16` | number of commands of your own |
 | `BLACKBOX_CMD_QUEUE` | `4` | queued commands waiting for `handleCommands()` |
@@ -124,7 +121,7 @@ Writes formatted lines to the serial port, and reads command lines from it. Mess
 Colours need an ANSI-capable terminal. PlatformIO's serial monitor strips control codes with its default filter; `monitor_filters = direct` keeps them.
 
 ### Telnet
-A telnet server for one client at a time; a new connection replaces the old one. On connect, the client first gets everything still in the ring (including previous boots), then everything live. Connect with `telnet <ip>` or PuTTY (Telnet or Raw).
+A telnet server for one client at a time; a new connection replaces the old one. A client only gets what hasn't been sent to telnet yet: while nobody is connected the log waits in the ring, and on connect you get everything since the last time, then everything live. That includes lines from before a reboot that weren't sent yet. Type `replay` to get the whole ring again. Connect with `telnet <ip>` or PuTTY (Telnet or Raw).
 
 The server opens its port by itself once the network is up, so `begin()` can run before WiFi is connected.
 
@@ -140,19 +137,68 @@ per record:   total_len(u16)  level(u8)  source(u8)  time_ms(u32)  line(u16)
               file_len(u8) file  func_len(u8) func  text_len(u16) text
 ```
 
-`source` is 0 = application macros, 1 = ESP-IDF, 2 = `print()`, 3 = BlackBox itself. Text lines sent by the client are handled as commands.
+`source` is 0 = application macros, 1 = ESP-IDF, 2 = `print()`, 3 = BlackBox itself. Text lines sent by the client are handled as commands. Like telnet, a client only gets records it hasn't received yet; send `replay` for the whole ring.
 
 ## Text format
 
 ```
-  12.345 E main.cpp:handle_ir(301) Crash test: writing to address 0
+  12.345 E main.cpp:cmd_crash(19) crashing on purpose
   12.401 W (12401) wifi: something from ESP-IDF
-  13.002 --- boot, reset reason: panic ---
+  13.002 --- boot, reset reason: panic (ESP_RST_PANIC) ---
 ```
 
 Seconds.milliseconds since boot, a level letter, file without path, function(line), and the message. ESP-IDF lines keep their own prefix; BlackBox's own messages are shown between `---`.
 
 Telnet colours: errors red, warnings yellow, debug grey, verbose dim, BlackBox messages magenta.
+
+### Boot messages
+
+Every boot starts with a marker that says why the chip (re)started. The names in brackets are ESP-IDF's `esp_reset_reason_t` and, after a deep sleep wake, `esp_sleep_wakeup_cause_t`.
+
+Normal power-on, or the EN/reset button (the classic ESP32 reports that as power-on too):
+```
+     0.071 --- boot, reset reason: power-on (ESP_RST_POWERON) ---
+```
+
+After an OTA update, `esp_restart()` or the `reboot` command:
+```
+     0.111 --- boot, reset reason: software (ESP_RST_SW) ---
+```
+
+Waking up from deep sleep, here through an ext0 pin:
+```
+     0.071 --- boot, reset reason: deep sleep wake (ESP_RST_DEEPSLEEP), wakeup: ext0 (ESP_SLEEP_WAKEUP_EXT0) ---
+```
+
+After a crash, with `BLACKBOX_COREDUMP_REPORT 1`, followed by the report (see [Crashes and the core dump](#crashes-and-the-core-dump)):
+```
+     0.071 --- boot, reset reason: panic (ESP_RST_PANIC) ---
+     0.117 E bb_coredump.cpp:bb_coredump_report(76) Core dump from previous boot found.
+     0.117 E bb_coredump.cpp:bb_coredump_report(84) Task 'loopTask': StoreProhibited (cause 29), PC 0x400d4380, address 0x00000000
+     0.118 E bb_coredump.cpp:bb_coredump_report(105) Backtrace: 0x400d4380 0x400d3ead 0x400d3e12 0x400ee060 0x4008d001
+```
+
+A later boot while that dump is still in flash (`BLACKBOX_COREDUMP_ERASE 0`), reported as a warning:
+```
+     0.071 --- boot, reset reason: deep sleep wake (ESP_RST_DEEPSLEEP), wakeup: ext0 (ESP_SLEEP_WAKEUP_EXT0) ---
+     0.117 W bb_coredump.cpp:bb_coredump_report(78) Expired Core dump found
+     0.117 W bb_coredump.cpp:bb_coredump_report(84) Task 'loopTask': StoreProhibited (cause 29), PC 0x400d4380, address 0x00000000
+     0.118 W bb_coredump.cpp:bb_coredump_report(105) Backtrace: 0x400d4380 0x400d3ead 0x400d3e12 0x400ee060 0x4008d001
+```
+
+The first boot of a new firmware while an older firmware's dump is still in flash:
+```
+     0.111 --- boot, reset reason: software (ESP_RST_SW) ---
+     0.157 W bb_coredump.cpp:bb_coredump_report(64) Core dump from another firmware (ELF sha256 5704de73) found, erased
+```
+
+A hang caught by a watchdog. The last line before the marker shows how far the previous boot got:
+```
+   121.197 D main.cpp:go_to_sleep(57) deep_sleep_start()
+     0.071 --- boot, reset reason: interrupt watchdog (ESP_RST_INT_WDT) ---
+```
+
+The full list of reset reasons is power-on, external pin, software, panic, interrupt watchdog, task watchdog, other watchdog, deep sleep wake, brownout, SDIO, USB, JTAG, efuse error, power glitch and CPU lockup.
 
 ## Commands
 
@@ -237,22 +283,27 @@ After a crash, connect and you'll see the log leading up to the crash, followed 
 The backtrace itself is printed by the panic handler straight to the UART and is not in the ring. If your core writes core dumps to flash (Arduino-ESP32 3.x does by default, with a `coredump` partition in the partition table), set `BLACKBOX_COREDUMP_REPORT 1` to log the crash at the next boot:
 
 ```
-Last core dump (from the previous boot, this firmware, ELF sha256 1a2b3c4d): task 'loopTask'
-Exception: StoreProhibited (cause 29), PC 0x400d2f1a, address 0x00000000
-A0  0x800d3b44  A1  0x3ffb2270  A2  0x00000000  A3  0x00000001
-A4  0x3ffc1a2c  A5  0x00000000  A6  0x00000000  A7  0x00000000
-A8  0x800d2f18  A9  0x3ffb2250  A10 0x00000000  A11 0x3ffc1b10
-A12 0x00000001  A13 0x00000000  A14 0x00000000  A15 0x00000000
-EPC1 0x400d2f1a
-Backtrace: 0x400d2f1a 0x400d3b44 0x400e1c20 ...
+E Core dump from previous boot found.
+E Task 'loopTask': StoreProhibited (cause 29), PC 0x400d2f1a, address 0x00000000
+E Backtrace: 0x400d2f1a 0x400d3b44 0x400e1c20 ...
+```
+
+A dump that is not from the previous boot (the reset reason of this boot isn't a panic or watchdog) is reported at warning level, starting with `Expired Core dump found`.
+
+With `BLACKBOX_COREDUMP_REGISTERS 1`, the registers follow the task line:
+
+```
+E A0  0x800d3b44  A1  0x3ffb2270  A2  0x00000000  A3  0x00000001
+E A4  0x3ffc1a2c  A5  0x00000000  A6  0x00000000  A7  0x00000000
+E A8  0x800d2f18  A9  0x3ffb2250  A10 0x00000000  A11 0x3ffc1b10
+E A12 0x00000001  A13 0x00000000  A14 0x00000000  A15 0x00000000
 ```
 
 ### Reading the report
 
 - **task:** the FreeRTOS task that crashed, e.g. `loopTask` for Arduino's `loop()`.
 - **PC:** the instruction that crashed.
-- **A0–A15:** the CPU registers at the moment of the crash. A0 usually holds the return address (with the top bits set: `0x800d3b44` means `0x400d3b44`), A1 is the stack pointer; the others depend on the code. Registers holding `0x0` next to a cause 28/29 often point to the NULL pointer.
-- **EPC1…:** the address of the instruction where each (nested) exception happened; EPC1 is normally the same as PC.
+- **A0–A15** (optional): the CPU registers at the moment of the crash. A0 usually holds the return address (with the top bits set: `0x800d3b44` means `0x400d3b44`), A1 is the stack pointer; the others depend on the code. Registers holding `0x0` next to a cause 28/29 often point to the NULL pointer.
 - **exception cause:** the Xtensa exception code, with the name ESP-IDF's panic handler uses. The common ones:
 
   | Cause | Name | Usually means |
@@ -308,20 +359,43 @@ The ESP-IDF panic handler writes the dump on every crash, regardless of these se
 ```
 any task ─► DBG()/INFO()/…  ─► record ─► ring buffer ─► dispatcher task ─┬─► serial
 ESP_LOGx ─► vprintf hook ──────┘          (RTC memory)    (core 0, low prio) ├─► telnet
-BlackBox.print() ──────────────┘                                             ├─► syslog
+                                                                             ├─► syslog
                                                                              └─► binary
 ```
 
 - A record is an 18-byte header (length, level, source, time, file and function pointers, line) plus the formatted text.
 - File and function are stored as pointers to the string literals in flash. Those addresses change with every new firmware, so the ring header stores the firmware's ELF hash and the ring is cleared when it changes.
-- When the ring is full, the oldest records are dropped. Each output keeps its own read position; an output that falls too far behind gets a "bytes of log lost" message instead of garbled records.
+- When the ring is full, the oldest records are dropped. Each output keeps its own read position; an output that falls too far behind (a slow output, or nobody connected for a long time) gets a "bytes of log lost before this point" message instead of garbled records.
+- The read positions are stored in the RTC buffer too. After a reset that keeps RTC memory, every output continues where it stopped: nothing is sent twice, and lines from just before a crash that weren't sent yet still come out after the reboot. After a power-on, or when the ring is cleared because the firmware changed, every output starts at the beginning of the boot.
 - The dispatcher task wakes on every new record, and every 50 ms to handle input and new connections. It runs on core 0 by default, so a busy hang in Arduino's `loop()` (core 1) doesn't stop the log.
 
 ## ESP-IDF
 
-The core, the commands, the core dump report and all network outputs use only FreeRTOS, ESP-IDF and lwIP. Arduino is only used for the serial port (`bb_port.cpp`) and the `Print` base class. Both have an ESP-IDF branch: serial uses the console on `stdin`/`stdout`. `CMakeLists.txt` registers the library as an ESP-IDF component.
+The core, the commands, the core dump report and all network outputs use only FreeRTOS, ESP-IDF and lwIP. Arduino is only used for the serial port (`bb_port.cpp`), which has an ESP-IDF branch: the console on `stdin`/`stdout`. `CMakeLists.txt` registers the library as an ESP-IDF component.
 
 The ESP-IDF build has not been tested yet.
+
+## Size
+
+Measured on a classic ESP32 with Arduino-ESP32 3.3, serial and telnet outputs and the core dump report enabled:
+
+| Memory | Size | Notes |
+|---|---|---|
+| Flash (code + constants) | up to ~19 KB | about 2 KB of it is the core dump report: `BLACKBOX_COREDUMP_REPORT 0` saves that. Disabled outputs are not compiled in at all; the syslog and binary outputs add to this when enabled (not measured). Does not count `snprintf` and lwIP, which a WiFi project uses anyway. |
+| RAM, static | ~1.2 KB | the outputs' line buffers, the command table, the `print()` line buffer |
+| RAM, heap at runtime | ~4.3 KB + sockets | the dispatcher task's stack (`BLACKBOX_TASK_STACK`, 4 KB), the command queue (256 bytes), and the socket buffers of a connected telnet client |
+| RTC slow memory | `BLACKBOX_BUFSIZE` + 40 bytes | the ring and its header (including each output's read position); 4.1 KB of the ESP32's 8 KB by default |
+
+The flash figure is an upper limit: the linker drops functions that are never called.
+
+### RTC memory
+
+**With the default settings, the persistent log takes about half of the ESP32's 8 KB RTC slow memory.** The rest is shared with everything else that lives there: your own `RTC_DATA_ATTR` / `RTC_NOINIT_ATTR` variables, ESP-IDF's own RTC data, and ULP programs. If you need more of it, there are two ways:
+
+- **A smaller ring:** `BLACKBOX_BUFSIZE 2048` halves the use (2 KB + 40 bytes) and still holds roughly 25 to 50 messages.
+- **No persistence:** `BLACKBOX_RTC 0` moves the ring to normal RAM and frees the RTC memory completely, at the cost described below.
+
+With `BLACKBOX_RTC 0` the ring moves from RTC memory to normal RAM. It then costs the same amount of RAM instead, and it no longer survives a reset: after every reboot the log starts empty, and the boot marker is the first line. The outputs' read positions are in the same header, so they also start over: lines from just before a crash that weren't sent yet are lost.
 
 ## Limitations
 

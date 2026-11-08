@@ -488,36 +488,3 @@ void BlackBoxClass::clear()
     portEXIT_CRITICAL(&s_mux);
     bb_say("log cleared");
 };
-
-#ifdef ARDUINO
-// Print interface: collects characters into lines; use from one task at a time
-static char s_print_line[BLACKBOX_LINE_MAX];
-static size_t s_print_len = 0;
-
-size_t BlackBoxClass::write(uint8_t c)
-{
-    return write(&c, 1);
-};
-
-size_t BlackBoxClass::write(const uint8_t* buf, size_t len)
-{
-    for(size_t i = 0; i < len; i++)
-    {
-        char c = (char) buf[i];
-        if(c == '\r')
-            continue;
-        bool commit = (c == '\n');
-        if(!commit)
-        {
-            s_print_line[s_print_len++] = c;
-            commit = (s_print_len >= sizeof(s_print_line));
-        };
-        if(commit && s_print_len)
-        {
-            bb_store(BB_INFO, BB_SRC_PRINT, nullptr, nullptr, 0, s_print_line, s_print_len);
-            s_print_len = 0;
-        };
-    };
-    return len;
-};
-#endif // ARDUINO
