@@ -465,16 +465,16 @@ void BlackBoxClass::begin()
 #endif
 };
 
-void BlackBoxClass::vlog(bb_level_t level, const char* file, const char* func, uint16_t line, const char* fmt, va_list args)
+void BlackBoxClass::vlog(bb_level_t level, bb_static_str file, bb_static_str func, uint16_t line, const char* fmt, va_list args)
 {
     char text[BLACKBOX_LINE_MAX];
     int len = vsnprintf(text, sizeof(text), fmt, args);
     if(len < 0)
         return;
-    bb_store(level, BB_SRC_APP, file, func, line, text, BB_MIN((size_t)len, sizeof(text) - 1));
+    bb_store(level, BB_SRC_APP, file.str, func.str, line, text, BB_MIN((size_t)len, sizeof(text) - 1));
 };
 
-void BlackBoxClass::log(bb_level_t level, const char* file, const char* func, uint16_t line, const char* fmt, ...)
+void BlackBoxClass::log(bb_level_t level, bb_static_str file, bb_static_str func, uint16_t line, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -484,12 +484,12 @@ void BlackBoxClass::log(bb_level_t level, const char* file, const char* func, ui
 
 #if BLACKBOX_ISR
 // From an ISR: no formatting and no notify; the dispatcher picks it up within 50 ms
-void BlackBoxClass::logISR(bb_level_t level, const char* file, const char* func, uint16_t line, const char* text, size_t len)
+void BlackBoxClass::logISR(bb_level_t level, bb_static_str file, bb_static_str func, uint16_t line, const char* text, size_t len)
 {
     // The first record starts the ring and writes the boot message with vsnprintf: not from an ISR
     if(!s_initialized)
         return;
-    bb_put<true>(level, BB_SRC_ISR, file, func, line, text, len);
+    bb_put<true>(level, BB_SRC_ISR, file.str, func.str, line, text, len);
 };
 #endif // BLACKBOX_ISR
 

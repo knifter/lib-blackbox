@@ -94,7 +94,7 @@ An instance belongs to one task: it keeps its own line buffer and takes no lock.
 
 ```cpp
 BlackBox.begin();                                   // starts the dispatcher task, the outputs and the ESP-IDF hook
-BlackBox.log(level, file, func, line, fmt, ...);    // what the macros call, file-func should be static ptrs!
+BlackBox.log(level, file, func, line, fmt, ...);    // what the macros call; file and func must be static strings (C++20: checked by the compiler)
 BlackBox.flush(timeout_ms);                         // waits until every output has sent everything; false on timeout
 BlackBox.flush();                                   // the same, with a 500 ms timeout
 BlackBox.clear();                                   // empties the ring

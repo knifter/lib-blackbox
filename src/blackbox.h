@@ -29,16 +29,29 @@ typedef enum : uint8_t
 
 typedef void (*bb_command_handler_t)(const char* args);
 
+// File and function are stored as pointers and read later by the dispatcher, even after a reset, so they must
+// be static strings (__FILE__, __FUNCTION__, literals) or nullptr. With C++20 consteval, anything else
+// (a stack or heap buffer) is a compile error; older standards accept it unchecked. No runtime cost either way
+struct bb_static_str
+{
+#if __cpp_consteval
+    consteval bb_static_str(const char* s) : str(s) {};
+#else
+    constexpr bb_static_str(const char* s) : str(s) {};
+#endif
+    const char* str;
+};
+
 class BlackBoxClass
 {
     public:
         void begin();                       // starts the dispatcher, the sinks and the ESP-IDF hook
 
-        void log(bb_level_t level, const char* file, const char* func, uint16_t line, const char* fmt, ...)
+        void log(bb_level_t level, bb_static_str file, bb_static_str func, uint16_t line, const char* fmt, ...)
             __attribute__((format(printf, 6, 7)));
-        void vlog(bb_level_t level, const char* file, const char* func, uint16_t line, const char* fmt, va_list args);
+        void vlog(bb_level_t level, bb_static_str file, bb_static_str func, uint16_t line, const char* fmt, va_list args);
 #if BLACKBOX_ISR
-        void logISR(bb_level_t level, const char* file, const char* func, uint16_t line, const char* text, size_t len);
+        void logISR(bb_level_t level, bb_static_str file, bb_static_str func, uint16_t line, const char* text, size_t len);
 #endif
 
         bool flush(uint32_t timeout_ms);    // waits until every sink has sent everything; false on timeout
