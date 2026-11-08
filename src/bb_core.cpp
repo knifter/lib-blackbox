@@ -43,7 +43,7 @@ RTC_NOINIT_ATTR static bb_buf_t s_buf;
 static bb_buf_t s_buf;
 #endif
 
-static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+static portMUX_TYPE s_ring_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_initialized = false;
 static bool s_buf_kept = false;         // the ring (and the sink positions) survived the reset
 static uint32_t s_boot_start = 0;
@@ -156,10 +156,10 @@ static void bb_say_boot()
 // the check under the lock lets only the first one through
 static void bb_init()
 {
-    portENTER_CRITICAL(&s_mux);
+    portENTER_CRITICAL(&s_ring_mux);
     if(s_initialized)
     {
-        portEXIT_CRITICAL(&s_mux);
+        portEXIT_CRITICAL(&s_ring_mux);
         return;
     };
 
@@ -181,7 +181,7 @@ static void bb_init()
     };
     s_boot_start = s_buf.head;
     s_initialized = true;
-    portEXIT_CRITICAL(&s_mux);
+    portEXIT_CRITICAL(&s_ring_mux);
 
     bb_say_boot();
 };
@@ -227,9 +227,9 @@ static void bb_put(bb_level_t level, bb_source_t source, const char* file, const
     hdr.line = line;
 
     if(isr)
-        portENTER_CRITICAL_ISR(&s_mux);
+        portENTER_CRITICAL_ISR(&s_ring_mux);
     else
-        portENTER_CRITICAL(&s_mux);
+        portENTER_CRITICAL(&s_ring_mux);
     // Drop the oldest records until the new one fits
     while(s_buf.head + hdr.len - s_buf.tail > BLACKBOX_BUFSIZE)
     {
@@ -246,9 +246,9 @@ static void bb_put(bb_level_t level, bb_source_t source, const char* file, const
     ring_in(s_buf.head + sizeof(hdr), text, len);
     s_buf.head += hdr.len;
     if(isr)
-        portEXIT_CRITICAL_ISR(&s_mux);
+        portEXIT_CRITICAL_ISR(&s_ring_mux);
     else
-        portEXIT_CRITICAL(&s_mux);
+        portEXIT_CRITICAL(&s_ring_mux);
 };
 
 void bb_store(bb_level_t level, bb_source_t source, const char* file, const char* func, uint16_t line, const char* text, size_t len)
@@ -280,7 +280,7 @@ bool bb_read(uint32_t& cursor, bb_record_t& rec, char* text, size_t text_size, u
     bool ok = false;
     lost = 0;
 
-    portENTER_CRITICAL(&s_mux);
+    portENTER_CRITICAL(&s_ring_mux);
     if((int32_t)(cursor - s_buf.tail) < 0)
     {
         lost = s_buf.tail - cursor;
@@ -301,7 +301,7 @@ bool bb_read(uint32_t& cursor, bb_record_t& rec, char* text, size_t text_size, u
             ok = true;
         };
     };
-    portEXIT_CRITICAL(&s_mux);
+    portEXIT_CRITICAL(&s_ring_mux);
 
     if(!ok)
         return false;
@@ -348,9 +348,9 @@ bool bb_sink::at_head()
 
 void bb_sink::replay()
 {
-    portENTER_CRITICAL(&s_mux);
+    portENTER_CRITICAL(&s_ring_mux);
     *_cursor = s_buf.tail;
-    portEXIT_CRITICAL(&s_mux);
+    portEXIT_CRITICAL(&s_ring_mux);
 };
 
 void bb_poll_all()
@@ -520,10 +520,10 @@ bool BlackBoxClass::flush(uint32_t timeout_ms)
 
 void BlackBoxClass::clear()
 {
-    portENTER_CRITICAL(&s_mux);
+    portENTER_CRITICAL(&s_ring_mux);
     s_buf.tail = s_buf.head;
     for(int i = 0; i < s_nsinks; i++)
         s_sinks[i]->set_cursor(s_buf.head);
-    portEXIT_CRITICAL(&s_mux);
+    portEXIT_CRITICAL(&s_ring_mux);
     bb_say("log cleared");
 };
