@@ -196,9 +196,10 @@ const char* bb_elf_sha()
     return s_elf;
 };
 
+// Without the lock: see at_head()
 uint32_t bb_head()
 {
-    return s_buf.head;
+    return __atomic_load_n(&s_buf.head, __ATOMIC_RELAXED);
 };
 
 uint32_t bb_tail()
