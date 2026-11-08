@@ -152,14 +152,23 @@ static void bb_say_boot()
     bb_say("%s", text);
 };
 
-// Once per boot, at the first log call (in setup/app_main, before other tasks log)
+// Once per boot, at the first log call or in begin(). Two tasks may get here at the same time:
+// the check under the lock lets only the first one through
 static void bb_init()
 {
-    s_initialized = true;
-    esp_app_get_elf_sha256(s_elf, sizeof(s_elf));
+    portENTER_CRITICAL(&s_mux);
+    if(s_initialized)
+    {
+        portEXIT_CRITICAL(&s_mux);
+        return;
+    };
 
+    esp_app_get_elf_sha256(s_elf, sizeof(s_elf));
+    // Check if the existing memory is a compatible ringbuf for us
     s_buf_kept = true;
-    if(s_buf.magic != BB_MAGIC || s_buf.size != BLACKBOX_BUFSIZE || memcmp(s_buf.elf, s_elf, 8) != 0
+    if(    s_buf.magic != BB_MAGIC 
+        || s_buf.size != BLACKBOX_BUFSIZE 
+        || memcmp(s_buf.elf, s_elf, 8) != 0
         || s_buf.head - s_buf.tail > BLACKBOX_BUFSIZE)
     {
         s_buf_kept = false;
@@ -171,6 +180,8 @@ static void bb_init()
         memset(s_buf.cursor, 0, sizeof(s_buf.cursor));
     };
     s_boot_start = s_buf.head;
+    s_initialized = true;
+    portEXIT_CRITICAL(&s_mux);
 
     bb_say_boot();
 };
