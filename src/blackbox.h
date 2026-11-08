@@ -24,6 +24,7 @@ typedef enum : uint8_t
     BB_SRC_ESPIDF,          // ESP_LOGx
     BB_SRC_PRINT,           // BlackBoxPrint (bb_print.h, Arduino only)
     BB_SRC_SYSTEM,          // BlackBox itself: boot marker, lost records, command replies
+    BB_SRC_ISR,             // ISR_xxx macros
 } bb_source_t;
 
 typedef void (*bb_command_handler_t)(const char* args);
@@ -36,6 +37,9 @@ class BlackBoxClass
         void log(bb_level_t level, const char* file, const char* func, uint16_t line, const char* fmt, ...)
             __attribute__((format(printf, 6, 7)));
         void vlog(bb_level_t level, const char* file, const char* func, uint16_t line, const char* fmt, va_list args);
+#if BLACKBOX_ISR
+        void logISR(bb_level_t level, const char* file, const char* func, uint16_t line, const char* text, size_t len);
+#endif
 
         bool flush(uint32_t timeout_ms);    // waits until every sink has sent everything; false on timeout
         void clear();                       // empties the ring
@@ -83,5 +87,45 @@ extern BlackBoxClass BlackBox;
 #else
     #define VERBOSE(msg, ...)
 #endif
+
+#if BLACKBOX_ISR
+
+#undef ISR_ERROR
+#undef ISR_WARNING
+#undef ISR_INFO
+#undef ISR_DBG
+#undef ISR_VERBOSE
+
+// From an interrupt handler: a string literal only ("" msg won't compile otherwise), no arguments, no formatting.
+// Not from IRAM ISRs (ESP_INTR_FLAG_IRAM): this code and the strings are in flash
+// Without BLACKBOX_ISR these macros don't exist, so using them is a compile error
+#define BB_LOG_ISR(level, msg)      BlackBox.logISR(level, __FILE__, __FUNCTION__, __LINE__, "" msg, sizeof("" msg) - 1)
+
+#if BLACKBOX_LEVEL >= 1
+    #define ISR_ERROR(msg)          BB_LOG_ISR(BB_ERROR, msg)
+#else
+    #define ISR_ERROR(msg)
+#endif
+#if BLACKBOX_LEVEL >= 2
+    #define ISR_WARNING(msg)        BB_LOG_ISR(BB_WARNING, msg)
+#else
+    #define ISR_WARNING(msg)
+#endif
+#if BLACKBOX_LEVEL >= 3
+    #define ISR_INFO(msg)           BB_LOG_ISR(BB_INFO, msg)
+#else
+    #define ISR_INFO(msg)
+#endif
+#if BLACKBOX_LEVEL >= 4
+    #define ISR_DBG(msg)            BB_LOG_ISR(BB_DEBUG, msg)
+#else
+    #define ISR_DBG(msg)
+#endif
+#if BLACKBOX_LEVEL >= 5
+    #define ISR_VERBOSE(msg)        BB_LOG_ISR(BB_VERBOSE, msg)
+#else
+    #define ISR_VERBOSE(msg)
+#endif
+#endif // BLACKBOX_ISR
 
 #endif // __BLACKBOX_H

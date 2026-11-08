@@ -54,6 +54,7 @@ size_t bb_format_text(const bb_record_t& rec, char* out, size_t size, bool color
     switch(rec.source)
     {
         case BB_SRC_APP:
+        case BB_SRC_ISR:
             n = snprintf(out, size, "%s%6" PRIu32 ".%03" PRIu32 " %c %s:%s(%u) %.*s%s\r\n",
                 col, sec, ms, bb_level_char(rec.level), bb_basename(rec.file), rec.func ? rec.func : "", rec.line,
                 (int) rec.text_len, rec.text, rst);

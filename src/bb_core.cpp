@@ -206,11 +206,11 @@ uint32_t bb_tail()
     return s_buf.tail;
 };
 
-void bb_store(bb_level_t level, bb_source_t source, const char* file, const char* func, uint16_t line, const char* text, size_t len)
+// The ring write, shared by tasks and ISRs. isr picks the lock variant at compile time:
+// each caller gets its own copy, without a runtime check
+template<bool isr>
+static void bb_put(bb_level_t level, bb_source_t source, const char* file, const char* func, uint16_t line, const char* text, size_t len)
 {
-    if(!s_initialized)
-        bb_init();
-
     // Strip the line endings the old macros and ESP-IDF add; sinks add their own
     while(len && (text[len - 1] == '\n' || text[len - 1] == '\r'))
         len--;
@@ -226,7 +226,10 @@ void bb_store(bb_level_t level, bb_source_t source, const char* file, const char
     hdr.func = func;
     hdr.line = line;
 
-    portENTER_CRITICAL(&s_mux);
+    if(isr)
+        portENTER_CRITICAL_ISR(&s_mux);
+    else
+        portENTER_CRITICAL(&s_mux);
     // Drop the oldest records until the new one fits
     while(s_buf.head + hdr.len - s_buf.tail > BLACKBOX_BUFSIZE)
     {
@@ -242,7 +245,18 @@ void bb_store(bb_level_t level, bb_source_t source, const char* file, const char
     ring_in(s_buf.head, &hdr, sizeof(hdr));
     ring_in(s_buf.head + sizeof(hdr), text, len);
     s_buf.head += hdr.len;
-    portEXIT_CRITICAL(&s_mux);
+    if(isr)
+        portEXIT_CRITICAL_ISR(&s_mux);
+    else
+        portEXIT_CRITICAL(&s_mux);
+};
+
+void bb_store(bb_level_t level, bb_source_t source, const char* file, const char* func, uint16_t line, const char* text, size_t len)
+{
+    if(!s_initialized)
+        bb_init();
+
+    bb_put<false>(level, source, file, func, line, text, len);
 
     if(s_task)
         xTaskNotifyGive(s_task);
@@ -464,6 +478,17 @@ void BlackBoxClass::log(bb_level_t level, const char* file, const char* func, ui
     vlog(level, file, func, line, fmt, args);
     va_end(args);
 };
+
+#if BLACKBOX_ISR
+// From an ISR: no formatting and no notify; the dispatcher picks it up within 50 ms
+void BlackBoxClass::logISR(bb_level_t level, const char* file, const char* func, uint16_t line, const char* text, size_t len)
+{
+    // The first record starts the ring and writes the boot message with vsnprintf: not from an ISR
+    if(!s_initialized)
+        return;
+    bb_put<true>(level, BB_SRC_ISR, file, func, line, text, len);
+};
+#endif // BLACKBOX_ISR
 
 bool BlackBoxClass::flush(uint32_t timeout_ms)
 {

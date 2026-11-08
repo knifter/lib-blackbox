@@ -59,6 +59,24 @@ They take a `printf` format and arguments, and add file, function and line autom
 
 `BLACKBOX_LEVEL` removes the macros that are more verbose than that level at compile time: with `BLACKBOX_LEVEL 3`, `ERROR`, `WARNING` and `INFO` stay, and `DBG` and `VERBOSE` compile to nothing. The `level` command filters the same way per output at runtime.
 
+## Logging from an ISR
+
+The normal macros format with `vsnprintf` and wake the output task, neither of which is allowed in an interrupt handler. From an ISR use `ISR_ERROR`, `ISR_WARNING`, `ISR_INFO`, `ISR_DBG` and `ISR_VERBOSE`. They only exist with `#define BLACKBOX_ISR 1`, so using them is a deliberate choice for the conditions below:
+
+```cpp
+void IRAM_ATTR on_overflow()    // a normal ISR, not registered with ESP_INTR_FLAG_IRAM
+{
+    ISR_WARNING("ADC overflow");
+};
+```
+
+- A string literal only, no arguments: nothing is formatted. Anything other than a literal doesn't compile.
+- File, function and line are added as with the normal macros; the record's source is 4 (ISR).
+- The output task isn't woken: it picks the record up within 50 ms.
+- Records logged before the first normal log call or `begin()` are dropped: starting the ring writes the boot message, which needs `vsnprintf`.
+- **Not from IRAM ISRs** (`ESP_INTR_FLAG_IRAM`): the code and the strings are in flash, which isn't readable while those run. 
+- An ISR that logs on every interrupt can fill the ring within milliseconds and push out everything else.
+
 ## Print (Arduino)
 
 For code or libraries that want an Arduino `Print`, `bb_print.h` has `BlackBoxPrint`: everything printed to it is logged one record per line, at the level given when it is created.
@@ -96,6 +114,7 @@ Set these in your project's `config.h` (included automatically if it exists) or 
 | `BLACKBOX_RTC` | `1` | keep the ring in RTC memory so it survives resets (uses half the RTC memory by default); `0` puts it in normal RAM |
 | `BLACKBOX_LINE_MAX` | `256` | longest message text |
 | `BLACKBOX_LEVEL` | `5` | compile-time level; macros more verbose than this are removed |
+| `BLACKBOX_ISR` | `0` | the `ISR_xxx` macros, for logging from interrupt handlers |
 | `BLACKBOX_ESPLOG` | `1` | capture ESP-IDF `ESP_LOGx` output |
 | `BLACKBOX_SINK_SERIAL` | `1` | serial output |
 | `BLACKBOX_SERIAL_COLORS` | `0` | ANSI colours on serial |
@@ -150,7 +169,7 @@ per record:   total_len(u16)  level(u8)  source(u8)  time_ms(u32)  line(u16)
               file_len(u8) file  func_len(u8) func  text_len(u16) text
 ```
 
-`source` is 0 = application macros, 1 = ESP-IDF, 2 = `BlackBoxPrint`, 3 = BlackBox itself. Text lines sent by the client are handled as commands. Like telnet, a client only gets records it hasn't received yet; send `replay` for the whole ring.
+`source` is 0 = application macros, 1 = ESP-IDF, 2 = `BlackBoxPrint`, 3 = BlackBox itself, 4 = ISR macros. Text lines sent by the client are handled as commands. Like telnet, a client only gets records it hasn't received yet; send `replay` for the whole ring.
 
 ## Text format
 
@@ -417,3 +436,5 @@ With `BLACKBOX_RTC 0` the ring moves from RTC memory to normal RAM. It then cost
 - After a brownout, the RTC memory may be partly corrupted; the checks catch a fully random buffer, not necessarily a few flipped bytes.
 - One client at a time on telnet and on binary.
 - The panic backtrace is only available through the core dump report or a serial cable.
+- In interrupt handlers (ISRs) only the `ISR_xxx` macros: text only, and not from IRAM ISRs (see [Logging from an ISR](#logging-from-an-isr)). The normal macros and `ESP_LOGx` are not allowed there and may crash. In an IRAM ISR use `ESP_DRAM_LOGx` / `ESP_EARLY_LOGx`: they go straight to the UART and are not captured in the log.
+- Every log call, including `ESP_LOGx`, formats the message on the calling task's stack: `BLACKBOX_LINE_MAX` (256) bytes plus what `vsnprintf` needs, roughly 1 KB in total, more with `%f`. Give tasks that log enough stack; `uxTaskGetStackHighWaterMark()` shows how much is left.

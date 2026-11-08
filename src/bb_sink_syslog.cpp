@@ -91,12 +91,13 @@ class bb_sink_syslog : public bb_sink
                 case BB_SRC_APP:    app = "app"; break;
                 case BB_SRC_ESPIDF: app = "esp-idf"; break;
                 case BB_SRC_PRINT:  app = "print"; break;
+                case BB_SRC_ISR:    app = "isr"; break;
                 default:            app = "blackbox"; break;
             };
 
             // No timestamp ("-"): the server stamps the time of arrival
             int n;
-            if(rec.source == BB_SRC_APP)
+            if(rec.source == BB_SRC_APP || rec.source == BB_SRC_ISR)
                 n = snprintf(out, size, "<%u>1 - %s %s - - - %" PRIu32 ".%03" PRIu32 " %s:%s(%u) %.*s",
                     facility * 8 + severity, BLACKBOX_HOSTNAME, app, rec.time_ms / 1000, rec.time_ms % 1000,
                     bb_basename(rec.file), rec.func ? rec.func : "", rec.line, (int) rec.text_len, rec.text);

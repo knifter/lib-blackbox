@@ -26,6 +26,11 @@
     #define BLACKBOX_LEVEL              5
 #endif
 
+// 1: the ISR_xxx macros, for logging from interrupt handlers (see the README for the conditions)
+#ifndef BLACKBOX_ISR
+    #define BLACKBOX_ISR                0
+#endif
+
 // Capture ESP-IDF ESP_LOGx output
 #ifndef BLACKBOX_ESPLOG
     #define BLACKBOX_ESPLOG             1
