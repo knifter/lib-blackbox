@@ -59,6 +59,19 @@ They take a `printf` format and arguments, and add file, function and line autom
 
 `BLACKBOX_LEVEL` removes the macros that are more verbose than that level at compile time: with `BLACKBOX_LEVEL 3`, `ERROR`, `WARNING` and `INFO` stay, and `DBG` and `VERBOSE` compile to nothing. The `level` command filters the same way per output at runtime.
 
+## Print (Arduino)
+
+For code or libraries that want an Arduino `Print`, `bb_print.h` has `BlackBoxPrint`: everything printed to it is logged one record per line, at the level given when it is created.
+
+```cpp
+#include "bb_print.h"
+
+BlackBoxPrint wifiLog(BB_DEBUG);
+someLib.setDebugOutput(wifiLog);
+```
+
+An instance belongs to one task: it keeps its own line buffer and takes no lock. Give each task its own instance; a task may have several. A partial line is stored at the next `'\n'`, when the buffer is full, or on `flush()`. Each instance costs `BLACKBOX_LINE_MAX` bytes of RAM; without instances, and on ESP-IDF, it costs nothing.
+
 ## API
 
 ```cpp
@@ -137,7 +150,7 @@ per record:   total_len(u16)  level(u8)  source(u8)  time_ms(u32)  line(u16)
               file_len(u8) file  func_len(u8) func  text_len(u16) text
 ```
 
-`source` is 0 = application macros, 1 = ESP-IDF, 2 = `print()`, 3 = BlackBox itself. Text lines sent by the client are handled as commands. Like telnet, a client only gets records it hasn't received yet; send `replay` for the whole ring.
+`source` is 0 = application macros, 1 = ESP-IDF, 2 = `BlackBoxPrint`, 3 = BlackBox itself. Text lines sent by the client are handled as commands. Like telnet, a client only gets records it hasn't received yet; send `replay` for the whole ring.
 
 ## Text format
 
@@ -382,7 +395,7 @@ Measured on a classic ESP32 with Arduino-ESP32 3.3, serial and telnet outputs an
 | Memory | Size | Notes |
 |---|---|---|
 | Flash (code + constants) | up to ~19 KB | about 2 KB of it is the core dump report: `BLACKBOX_COREDUMP_REPORT 0` saves that. Disabled outputs are not compiled in at all; the syslog and binary outputs add to this when enabled (not measured). Does not count `snprintf` and lwIP, which a WiFi project uses anyway. |
-| RAM, static | ~1.2 KB | the outputs' line buffers, the command table, the `print()` line buffer |
+| RAM, static | ~1 KB | the outputs' line buffers, the command table. Each `BlackBoxPrint` instance adds `BLACKBOX_LINE_MAX` |
 | RAM, heap at runtime | ~4.3 KB + sockets | the dispatcher task's stack (`BLACKBOX_TASK_STACK`, 4 KB), the command queue (256 bytes), and the socket buffers of a connected telnet client |
 | RTC slow memory | `BLACKBOX_BUFSIZE` + 40 bytes | the ring and its header (including each output's read position); 4.1 KB of the ESP32's 8 KB by default |
 

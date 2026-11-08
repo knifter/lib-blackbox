@@ -22,7 +22,7 @@ typedef enum : uint8_t
 {
     BB_SRC_APP = 0,         // the logging macros
     BB_SRC_ESPIDF,          // ESP_LOGx
-    BB_SRC_PRINT,           // reserved: a separate Print class (number kept for the binary protocol)
+    BB_SRC_PRINT,           // BlackBoxPrint (bb_print.h, Arduino only)
     BB_SRC_SYSTEM,          // BlackBox itself: boot marker, lost records, command replies
 } bb_source_t;
 

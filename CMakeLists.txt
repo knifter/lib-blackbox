@@ -11,6 +11,7 @@ idf_component_register(
         "src/bb_sink_syslog.cpp"
         "src/bb_sink_binary.cpp"
         "src/bb_coredump.cpp"
+        "src/bb_print.cpp"
     INCLUDE_DIRS "src"
     REQUIRES esp_timer esp_system log lwip esp_netif espcoredump esp_app_format vfs
 )
