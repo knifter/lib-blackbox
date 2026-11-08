@@ -338,9 +338,12 @@ bool bb_sink::next(bb_record_t& rec)
     return true;
 };
 
+// Called by flush() from the application's task while the dispatcher and other tasks write, without the lock:
+// both are aligned 32-bit values, so a load can't see half an update. A stale value only makes flush() look
+// once more, or report done just before a record that was logged after flush() started
 bool bb_sink::at_head()
 {
-    return *_cursor == s_buf.head;
+    return __atomic_load_n(_cursor, __ATOMIC_RELAXED) == __atomic_load_n(&s_buf.head, __ATOMIC_RELAXED);
 };
 
 void bb_sink::replay()
